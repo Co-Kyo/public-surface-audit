@@ -1,0 +1,28 @@
+# 用自己的工具扫自己（dogfood）。
+#
+# 这是本仓的自我检查：词表召回脚本在仓库自身上跑一遍，证明它既能扫出坏句子，
+# 又不会因为自己的规则说明、引用原句而误伤（围栏代码块、行内反引号、行级放行标记
+# 三档跳过，见 scripts/redline-check.mjs 头注释）。
+#
+# 注意：本工作流不是发布门。脚本清零 ≠ 可发布——语气、弃留与红线 10/11 它都看不见，
+# 门是一次新上下文的审计（见 references/charter.md「发布前自查」）。
+name: self-check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  redline-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # --stat：只打印每个文件的命中数与总计，不打明细；本地跑默认给明细
+      - name: Wordlist recall on this repo
+        run: node scripts/redline-check.mjs --stat .

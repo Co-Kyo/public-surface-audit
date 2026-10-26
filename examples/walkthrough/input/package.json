@@ -1,0 +1,10 @@
+{
+  "name": "@acme/asset-shipper",
+  "version": "0.4.0",
+  "description": "把随包文件按名单拷进输出目录，缺一份就让构建失败。",
+  "bin": { "shipAssets": "./bin/cli.js" },
+  "scripts": {
+    "build": "node ./bin/cli.js copy",
+    "test": "node --test"
+  }
+}
