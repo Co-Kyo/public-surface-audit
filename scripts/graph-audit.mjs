@@ -292,11 +292,19 @@ const BUILTIN_ROOTS = new Set([
   'print', 'len', 'str', 'int', 'dict', 'list', 'self', 'sys', 'argparse',
 ]);
 
-function classifyTarget(raw) {
+// root 可选：给了就按真实文件系统判目录，没给只认路径形状。
+// 不判目录的后果是裸目录名（`css`）落到符号分支，凭空产出
+// "符号找不到＝文档描述的东西不存在"的假高置信发现。
+function classifyTarget(raw, root = null) {
   const t = String(raw || '').trim().replace(/`/g, '');
   if (!t) return null;
   if (t.startsWith('external:')) return { kind: 'external', raw: t };
   if (/\.[A-Za-z0-9]+$/.test(t) || t.includes('/')) return { kind: 'file', raw: t };
+  if (root && !/\s/.test(t)) {
+    try {
+      if (statSync(resolve(root, t)).isDirectory()) return { kind: 'file', raw: t };
+    } catch { /* 不是路径就当符号，照旧 */ }
+  }
   const parts = t.split(/\s+/);
   const tool = (parts[0] || '').replace(/^scripts\//, '').replace(/\.mjs$/, '');
   if (parts.length >= 2 && OWN_TOOLS.has(tool)) return { kind: 'command', tool, sub: parts.slice(1).join(' '), raw: t };
@@ -314,36 +322,88 @@ function classifyTarget(raw) {
 
 const TOOL_FILES = { 'graph-audit': 'scripts/graph-audit.mjs', 'redline-check': 'scripts/redline-check.mjs' };
 
+// 目录聚合要数全部文件：walk 只收 CODE_EXT（代码文件），
+// 拿它算 `css/` 的行数会恒得 0——而 CSS 恰恰是注释体公开面的主体。
+function walkAll(dir, out = []) {
+  let ents;
+  try {
+    ents = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of ents) {
+    if (e.name.startsWith('.') && e.name !== '.github') continue;
+    if (SKIP_DIR.has(e.name)) continue;
+    const p = join(dir, e.name);
+    let st;
+    try {
+      st = statSync(p);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) walkAll(p, out);
+    else out.push(p);
+  }
+  return out;
+}
+
 // 文件目标：存在与否 ＋ 图里有没有该文件的节点 ＋ 实测体积
 // 体积是文件类目标唯一能核的量：声称"1450 行"就必须给出实际行数，
 // 只判"文件存在"等于没核（issue #2 §7.1）。
+//
+// 行数有两个口径，差在"末尾有没有换行"：
+//   wc -l 口径   数换行符，`printf 'a\nb\nc'` → 2
+//   逻辑行口径   数内容行，同上 → 3
+// 作者写文档用的几乎都是 wc -l / `git diff --stat`，所以按 wc -l 为准，
+// 两个数都报出来（issue #3）。
+function countLines(text) {
+  const wc = (text.match(/\n/g) || []).length;          // 换行符个数 = wc -l
+  const logical = text.length === 0 ? 0 : text.replace(/\r?\n$/, '').split(/\r?\n/).length;
+  return { wc, logical, no_trailing_newline: text.length > 0 && !text.endsWith('\n') };
+}
+
 function resolveFileTarget(g, root, raw) {
   const clean = raw.replace(/\/$/, '');
   const p = resolve(root, clean);
   const exists = existsSync(p);
   const nodes = (g.nodes || []).filter((n) => String(n.source_file || '').replace(/\/$/, '') === clean);
   let lines = null;
+  let linesLogical = null;
+  let noTrailingNl = false;
   let bytes = null;
+  let fileCount = null;
   if (exists) {
     try {
       const st = statSync(p);
       if (st.isFile()) {
         bytes = st.size;
-        lines = readFileSync(p, 'utf8').split(/\r?\n/).length;
-        if (readFileSync(p, 'utf8').endsWith('\n')) lines -= 1;
+        const c = countLines(readFileSync(p, 'utf8'));
+        lines = c.wc;
+        linesLogical = c.logical;
+        noTrailingNl = c.no_trailing_newline;
       } else if (st.isDirectory()) {
         let n = 0;
         let b = 0;
-        for (const f of walk(p)) {
+        let wc = 0;
+        let lg = 0;
+        for (const f of walkAll(p)) {
           n += 1;
-          try { b += statSync(f).size; } catch { /* 读不到就跳过 */ }
+          try {
+            b += statSync(f).size;
+            const c = countLines(readFileSync(f, 'utf8'));
+            wc += c.wc;
+            lg += c.logical;
+          } catch { /* 读不到就跳过 */ }
         }
-        lines = n; // 目录：行数位放文件数
+        fileCount = n;
+        lines = wc;          // 目录：把目录内所有文件的 wc -l 加起来
+        linesLogical = lg;
         bytes = b;
       }
     } catch { /* 读不了就当没测到，不猜 */ }
   }
-  return { raw, exists, node_count: nodes.length, sample: nodes[0] ? nodes[0].id : null, lines, bytes, is_dir: exists && (() => { try { return statSync(p).isDirectory(); } catch { return false; } })() };
+  const isDir = exists && (() => { try { return statSync(p).isDirectory(); } catch { return false; } })();
+  return { raw, exists, node_count: nodes.length, sample: nodes[0] ? nodes[0].id : null, lines, lines_logical: linesLogical, no_trailing_newline: noTrailingNl, bytes, file_count: fileCount, is_dir: isDir };
 }
 
 // 命令目标：脚本里有没有这个子命令（找字面量 'sub' 或 --flag）
@@ -407,7 +467,7 @@ function patchGraph(P) {
     }
     g.nodes.push(node);
     for (const t of c.targets || []) {
-      const cls = classifyTarget(t);
+      const cls = classifyTarget(t, P.root);
       if (!cls || cls.kind === 'external') continue;
       if (cls.kind === 'file') {
         const ft = resolveFileTarget(g, P.root, cls.raw);
@@ -591,7 +651,7 @@ function cmdQueue() {
     }
     if (kind === 'reference') {
       const target = (String(c.label).match(/[\w.-]+(?:\/[\w.-]+)+(?:\.[A-Za-z0-9]+)?\/?|[\w.-]+\.(?:md|mdx|ts|js|json|yml|yaml)\b/) || [])[0]
-        || (c.targets || []).map((x) => classifyTarget(x)).find((x) => x && x.kind === 'file')?.raw
+        || (c.targets || []).map((x) => classifyTarget(x, P.root)).find((x) => x && x.kind === 'file')?.raw
         || null;
       const targetPath = target ? resolve(P.root, target.replace(/\/$/, '')) : null;
       selfViolations.push({
@@ -607,24 +667,36 @@ function cmdQueue() {
     const probes = quantityProbes(c.quantities);
     const resolved = [];
     for (const t of c.targets || []) {
-      const cls = classifyTarget(t);
+      const cls = classifyTarget(t, P.root);
       if (!cls || cls.kind === 'external') continue;
       if (cls.kind === 'file') {
         const ft = resolveFileTarget(g, P.root, cls.raw);
         // 文件类目标也要核量：声称的行数/字节数在这里对上，否则"文件存在"就是空判。
         // 只核数字类——标识符探针要扫函数体，文件目标没有"函数体"，
         // 拿整篇散文去搜一个词只会产出噪音（"banned"/"Chinese" 这类声称量的本来就不是字面出现）。
-        const size = ft.is_dir ? `${ft.lines} 个文件/${ft.bytes} 字节` : (ft.lines != null ? `${ft.lines} 行/${ft.bytes} 字节` : '体积读不到');
+        // 行数双口径：wc -l 与逻辑行都报，命中任一即算对上（issue #3）。
+        let size;
+        if (ft.is_dir) {
+          size = `${ft.file_count} 个文件／${ft.lines} 行（wc -l）／${ft.bytes} 字节`;
+        } else if (ft.lines != null) {
+          size = ft.lines === ft.lines_logical
+            ? `${ft.lines} 行／${ft.bytes} 字节`
+            : `${ft.lines} 行（wc -l）／${ft.lines_logical} 行（含末尾无换行）／${ft.bytes} 字节`;
+        } else {
+          size = '体积读不到';
+        }
         const numProbes = probes
           .filter((p) => /^数字\s*\d+$/.test(p.label))
           .map((p) => {
             const claimed = Number(p.label.match(/^数字\s*(\d+)$/)[1]);
             const found = [];
-            if (ft.lines === claimed) found.push({ line: 0, text: `行数 ${ft.lines} 与声称一致` });
+            if (ft.lines === claimed) found.push({ line: 0, text: `行数 ${ft.lines}（wc -l）与声称一致` });
+            if (ft.lines_logical === claimed && ft.lines_logical !== ft.lines) found.push({ line: 0, text: `行数 ${ft.lines_logical}（逻辑行）与声称一致` });
+            if (ft.file_count === claimed && ft.is_dir) found.push({ line: 0, text: `文件数 ${ft.file_count} 与声称一致` });
             if (ft.bytes === claimed) found.push({ line: 0, text: `字节数 ${ft.bytes} 与声称一致` });
-            return { ...p, found, ok: found.length > 0, claimed, lines: ft.lines, bytes: ft.bytes };
+            return { ...p, found, ok: found.length > 0, claimed, lines: ft.lines, lines_logical: ft.lines_logical, bytes: ft.bytes, is_dir: ft.is_dir, file_count: ft.file_count };
           });
-        resolved.push({ target: t, symbol: cls.raw, kind: 'file', hit: ft.exists ? { file: cls.raw, line: 0, symbol: `文件存在（图内节点 ${ft.node_count}；实测 ${size}）`, from_graph: ft.node_count > 0, body_size: ft.is_dir ? ft.lines : (ft.lines || 0), probes: numProbes, body_writes: [], exit_codes: [] } : null, file_detail: ft });
+        resolved.push({ target: t, symbol: cls.raw, kind: 'file', hit: ft.exists ? { file: cls.raw, line: 0, symbol: `文件存在（图内节点 ${ft.node_count}；实测 ${size}）`, from_graph: ft.node_count > 0, body_size: ft.is_dir ? ft.file_count : (ft.lines || 0), probes: numProbes, body_writes: [], exit_codes: [] } : null, file_detail: ft });
         continue;
       }
       if (cls.kind === 'command') {
@@ -796,8 +868,19 @@ function cmdQueue() {
         }
         out.push(`  目标 ${r.target} → ${r.hit.file}:${r.hit.line}（${r.hit.symbol}${r.hit.from_graph ? '，来自图节点' : '，源码兜底定位'}，函数体 ${r.hit.body_size} 行）`);
         for (const p of r.hit.probes) {
-          if (p.ok) out.push(`      量「${p.label}」→ 命中 ${p.found.length} 处：${p.found.map((f) => `L${f.line}`).join(', ')}`);
-          else out.push(`      量「${p.label}」→ 函数体内未出现　<<< 核对是否方向对、细节错`);
+          // 文件类目标的量没有行号（量是"整篇的行数/字节数"），只报说明文字；
+          // 符号类才有行号可报。
+          if (p.ok) {
+            const hits = p.found.map((f) => (f.line ? `L${f.line}` : f.text)).join('；');
+            out.push(`      量「${p.label}」→ 命中：${hits}`);
+          } else if (r.kind === 'file') {
+            const measured = p.is_dir
+              ? `${p.file_count} 个文件／${p.lines} 行（wc -l）`
+              : `${p.lines} 行（wc -l）／${p.lines_logical} 行（逻辑行）／${p.bytes} 字节`;
+            out.push(`      量「${p.label}」→ 实测 ${measured}，都对不上声称的 ${p.claimed}　<<< 核对是否方向对、细节错`);
+          } else {
+            out.push(`      量「${p.label}」→ 函数体内未出现　<<< 核对是否方向对、细节错`);
+          }
         }
         if (r.hit.exit_codes && r.hit.exit_codes.length) {
           out.push(`      函数体内全部退出码：${r.hit.exit_codes.map((e) => `exit(${e.code})@L${e.line}`).join('、')}`);
