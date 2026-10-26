@@ -166,6 +166,7 @@ This repository runs the program on itself:
 - [`self-check.yml`](.github/workflows/self-check.yml) runs `node scripts/redline-check.mjs --stat .` on every push and pull request.
 - [`examples/before-after/`](examples/before-after/) holds real rewrites, each labelled with the redline it broke.
 - [`examples/walkthrough/`](examples/walkthrough/) records one complete run on a small file set, scoping through closing. In that run the recall script returned zero hits and the verdict still upheld five violations — the worked argument for the gate being an audit rather than a script.
+- The same walkthrough ends with the program auditing **its own `SKILL.md`**. The cold reader raised 8 objections; all 8 held. Six of them were invisible to every other layer — a pronoun meaning two different people, an undefined term used before its definition, a rule that contradicted itself, and an argument whose two halves cancelled out. That last one is the reason the review step exists: it found a crack in the reasoning that three read-throughs by the author did not.
 
 This program goes through its own gate before it asks you to pass yours.
 

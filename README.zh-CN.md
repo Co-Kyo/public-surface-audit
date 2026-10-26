@@ -166,6 +166,7 @@ graphify update                                 # 首建与以后每轮的增量
 - [`self-check.yml`](.github/workflows/self-check.yml) 每次 push 和 PR 都在仓库自身上跑 `node scripts/redline-check.mjs --stat .`。
 - [`examples/before-after/`](examples/before-after/) 是真实改写，每组标注违反了哪条红线。
 - [`examples/walkthrough/`](examples/walkthrough/) 记录一次完整实录，从定标一直跑到收口。这一轮里词表召回零命中，裁决仍成立 5 条——"门是审计不是脚本"在这份实录里是跑出来的，不是说的。
+- 同一份实录结尾，是这套程序审**它自己的 `SKILL.md`**。陌生读者提了 8 条，8 条全部成立，其中 6 条是其他各层一条都抓不到的：一个代词指了两个人、一个术语在定义之前先用了、一条规则自己跟自己矛盾、一段论证前后两半互相抵消。最后那条正是这一步存在的理由——它找出了作者读了三遍都没发现的裂缝。
 
 这个程序先过自己的门，再来要求你过你的门。
 
