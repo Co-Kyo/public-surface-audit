@@ -86,7 +86,14 @@ Manual — drop the directory into whichever skills folder your harness reads:
 cp -r public-surface-audit ~/.claude/skills/
 ```
 
-Set it up once per repo: `node scripts/graph-audit.mjs init --root .` creates `.audit/` and adds it to `.gitignore`, then the graphify skill builds the graph. After that, an audit run is a few commands — see *Built on graphify* below.
+Set it up once per repo: `node scripts/graph-audit.mjs init --root .` creates `.audit/`, adds it (and `graphify-out/`) to `.gitignore`, and prints the exact graph-building command. Then build the graph once:
+
+```bash
+export GRAPHIFY_OUT=$PWD/.audit/graphify-out   # required — see "Built on graphify"
+graphify update                                 # first build and every increment; no API key needed
+```
+
+After that, an audit run is a few commands — see *Built on graphify* below.
 
 **Language boundary:** the reference set ships in Chinese, with technical terms left in English (PASS/FAIL, diff, CLI, batch IDs, `file:line`). The English page is the front door; the judgement body is Chinese prose.
 
@@ -140,7 +147,11 @@ This skill stands on top of the **graphify** skill — a hard dependency, not an
 | Claim layer | claim nodes + claim→symbol pairing edges | `graph-audit ingest-claims` |
 | Verdict layer | `audit_verdict` etc. on claim nodes | `graph-audit record` |
 
-**Memory is the graph itself.** A claim whose file's content hash is unchanged is not re-queued next round; changed ones return with the previous verdict attached. Judgement follows content, not time. (After `graphify update`, run `graph-audit reconcile` — the rebuild wipes the audit layer, the ledger puts it back.)
+**Memory is the graph itself.** A claim whose file's content hash is unchanged is not re-queued next round; changed ones return with the previous verdict attached. Judgement follows content, not time. `graphify update` preserves the audit layer (verified), but it evicts nodes whose source file is gone — run `graph-audit reconcile` after files are added or deleted to put the memory back.
+
+**One environment variable holds the whole graph chain together.** `graphify update` takes no `--out`: it writes to `graphify-out/` one level above its target. Run it from `.audit` and the graph lands in the repo root while the scripts read `.audit/graphify-out/` — every increment silently no-ops. Set `GRAPHIFY_OUT=<repo>/.audit/graphify-out` (absolute, cwd-independent) and both `extract` and `update` stay on the same graph. `graph-audit status` warns when a stray root-level graph exists.
+
+**No API key is not a dead end.** `graphify extract .` needs an LLM key for docs, but `graphify update` does not — it produces code symbols plus document structure nodes (pages and headings). That is enough to run the queue. Do **not** fall back to `--code-only`: its zero document nodes make pairing useless while still looking like a healthy graph.
 
 **Most violations need no code check at all.** Claims tagged `future` / `process` / `quality` (future tense, development history, self-praise) are violations on their own — redlines 6, 2 and 9. They skip straight to the findings list.
 

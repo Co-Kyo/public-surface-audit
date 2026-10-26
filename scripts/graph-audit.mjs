@@ -54,13 +54,56 @@ function paths(rootArg) {
 }
 
 // ---------- 图 IO ----------
+// 图只有一张，位置固定：<被审仓>/.audit/graphify-out/graph.json
+// 建图与增量都必须用 GRAPHIFY_OUT 指到这里（见 init 打印的命令），
+// 否则 `graphify update` 会把图写到 <被审仓>/graphify-out/ —— 那是另一张图，
+// 本脚本读不到，等于增量全部白跑。下面两个检查就是拦这种情况。
+const OUT_REL = join('.audit', 'graphify-out');
+
+function strayGraph(P) {
+  const p = join(P.root, 'graphify-out', 'graph.json');
+  return existsSync(p) ? p : null;
+}
+
 function loadGraph(P) {
-  if (!existsSync(P.graph)) die(`找不到图：${P.graph}\n先用 graphify 技能建图（cd <被审仓>/.audit && graphify .. --no-viz）`);
+  if (!existsSync(P.graph)) {
+    const stray = strayGraph(P);
+    const hint = stray
+      ? `\n发现仓根有一张图：${stray}\n那是 ` + '`graphify update`' + ` 没定向时写出来的（本脚本不读它）。\n把图搬正：删掉仓根 graphify-out/，再用 init 打印的命令重建。`
+      : `\n先用 graphify 技能建图。注意必须把输出定向到 .audit，且用 update（免 key、连文档节点一起出）：\n  cd <被审仓> && GRAPHIFY_OUT=$PWD/.audit/graphify-out graphify update`;
+    die(`找不到图：${P.graph}${hint}`);
+  }
   try {
     return JSON.parse(readFileSync(P.graph, 'utf8'));
   } catch (e) {
     die(`graph.json 解析失败：${e.message}`);
   }
+}
+
+// 图覆盖检查：只有代码节点的图，声称抽取拿不到文档语义，配对能力是残的。
+// `graphify extract . --code-only` 产出合法但残缺的图，不检查就会静默降级。
+function graphCoverage(g) {
+  const nodes = g.nodes || [];
+  const by = { code: 0, document: 0, other: 0 };
+  const files = new Set();
+  for (const n of nodes) {
+    const ft = n.file_type || '';
+    if (ft === 'code') by.code += 1;
+    else if (ft === 'document' || ft === 'concept' || ft === 'rationale') by.document += 1;
+    else by.other += 1;
+    if (n.source_file) files.add(String(n.source_file));
+  }
+  return { ...by, total: nodes.length, files: files.size, code_only: by.document === 0 && by.code > 0 };
+}
+
+function warnCoverage(g, P) {
+  const cov = graphCoverage(g);
+  if (!cov.code_only) return cov;
+  console.error(`警告：图里 0 个文档节点（${cov.code} 个代码节点）——这张图只覆盖代码符号。`);
+  console.error('      文档类声称的语义配对不可用，抽声称会退化成纯人工读。');
+  console.error('      补文档节点：去掉 --code-only 再跑一次 graphify extract（需要 LLM key）；');
+  console.error('      或直接用 graphify update，它免 key 就能补出文档的 page/heading 结构节点。');
+  return cov;
 }
 function saveGraph(P, g) {
   writeFileSync(P.graph, JSON.stringify(g, null, 2) + '\n', 'utf8');
@@ -209,7 +252,16 @@ function quantityProbes(quantities) {
   for (const q of quantities || []) {
     const t = String(q).trim();
     let m = t.match(/退出码\s*(\d+)/);
-    if (m) probes.push({ q: t, label: `退出码 ${m[1]}`, re: new RegExp(`exit\\s*\\(\\s*${m[1]}\\s*\\)`) });
+    if (m) {
+      // 退出码不只以字面量出现：`process.exit(c)` 里 c 是表达式（三元、常量），
+      // 也见于 `exitCode = N`、`throw new Error` 旁的注释。只认 exit(1) 会漏掉
+      // 三元式退出（redline-check 的 exit 1 就是这么写的，被判成"未出现"）。
+      probes.push({
+        q: t,
+        label: `退出码 ${m[1]}`,
+        re: new RegExp(`(?:exit\\s*\\(\\s*${m[1]}\\s*\\)|exitCode\\s*=\\s*${m[1]}(?![\\d])|\\?\\s*${m[1]}\\s*:\\s*|:\\s*${m[1]}\\s*\\)|\\b${m[1]}\\s*\\)\\s*;?\\s*$)`),
+      });
+    }
     m = t.match(/^(\d+)$/);
     if (m) probes.push({ q: t, label: `数字 ${m[1]}`, re: new RegExp(`(?<![\\w.])${m[1]}(?![\\w.])`) });
     if (/^[.\w/-]+\.\w+$/.test(t) || t.startsWith('.')) {
@@ -223,10 +275,22 @@ function quantityProbes(quantities) {
   return probes.filter((p) => (seen.has(p.label) ? false : (seen.add(p.label), true)));
 }
 
-// 目标分类：文件路径 / 本仓脚本子命令 / 外部命令 / 纯符号。四类解析方式不同，
+// 目标分类：文件路径 / 本仓脚本子命令 / 外部命令 / 平台内置 / 纯符号。
 // 混在一起会把"文件/子命令没在图里"误报成"符号不存在"的高置信信号。
 const OWN_TOOLS = new Set(['graph-audit', 'redline-check']);
 const EXT_TOOLS = new Set(['graphify', 'node', 'git', 'npm', 'npx', 'python', 'python3', 'gh', 'uv']);
+
+// 平台／运行时内置：它们在文档里出现是正常描述，不是"本仓应该实现的符号"。
+// 不排除的话，`process.exit(0)`、`console.log` 这类目标永远"图里找不到"，
+// 每条都冒出一条假高置信发现——正是上一轮 130 条误报的同类毛病。
+const BUILTIN_ROOTS = new Set([
+  'process', 'console', 'require', 'module', 'exports', 'global', 'globalThis',
+  'JSON', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Promise',
+  'Date', 'RegExp', 'Error', 'Map', 'Set', 'Symbol', 'Buffer', 'fs', 'path',
+  'os', 'url', 'http', 'https', 'crypto', 'util', 'stream', 'child_process',
+  'window', 'document', 'localStorage', 'fetch', 'setTimeout', 'setInterval',
+  'print', 'len', 'str', 'int', 'dict', 'list', 'self', 'sys', 'argparse',
+]);
 
 function classifyTarget(raw) {
   const t = String(raw || '').trim().replace(/`/g, '');
@@ -238,18 +302,48 @@ function classifyTarget(raw) {
   if (parts.length >= 2 && OWN_TOOLS.has(tool)) return { kind: 'command', tool, sub: parts.slice(1).join(' '), raw: t };
   if (parts.length === 1 && OWN_TOOLS.has(tool)) return { kind: 'script', tool, raw: t };
   if (parts.length >= 2 && EXT_TOOLS.has(tool)) return { kind: 'external', raw: t };
-  return { kind: 'symbol', sym: t.replace(/[()]/g, ''), raw: t };
+  // 调用形态要取函数名再查：`process.exit(0)` 是整个成员表达式，
+  // 简单去掉括号会变成 `process.exit0`，永远命中不了任何符号，
+  // 于是每条带参数的调用都被判成"文档描述的东西不存在"（假高置信）。
+  const called = t.match(/^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/);
+  const sym = called ? called[1] : t.replace(/[()]/g, '');
+  // 平台内置不算"本仓该有的符号"：找不到是正常的，不该报成候选发现。
+  if (BUILTIN_ROOTS.has(sym.split('.')[0])) return { kind: 'external', raw: t };
+  return { kind: 'symbol', sym, raw: t };
 }
 
 const TOOL_FILES = { 'graph-audit': 'scripts/graph-audit.mjs', 'redline-check': 'scripts/redline-check.mjs' };
 
-// 文件目标：存在与否 ＋ 图里有没有该文件的节点
+// 文件目标：存在与否 ＋ 图里有没有该文件的节点 ＋ 实测体积
+// 体积是文件类目标唯一能核的量：声称"1450 行"就必须给出实际行数，
+// 只判"文件存在"等于没核（issue #2 §7.1）。
 function resolveFileTarget(g, root, raw) {
   const clean = raw.replace(/\/$/, '');
   const p = resolve(root, clean);
   const exists = existsSync(p);
   const nodes = (g.nodes || []).filter((n) => String(n.source_file || '').replace(/\/$/, '') === clean);
-  return { raw, exists, node_count: nodes.length, sample: nodes[0] ? nodes[0].id : null };
+  let lines = null;
+  let bytes = null;
+  if (exists) {
+    try {
+      const st = statSync(p);
+      if (st.isFile()) {
+        bytes = st.size;
+        lines = readFileSync(p, 'utf8').split(/\r?\n/).length;
+        if (readFileSync(p, 'utf8').endsWith('\n')) lines -= 1;
+      } else if (st.isDirectory()) {
+        let n = 0;
+        let b = 0;
+        for (const f of walk(p)) {
+          n += 1;
+          try { b += statSync(f).size; } catch { /* 读不到就跳过 */ }
+        }
+        lines = n; // 目录：行数位放文件数
+        bytes = b;
+      }
+    } catch { /* 读不了就当没测到，不猜 */ }
+  }
+  return { raw, exists, node_count: nodes.length, sample: nodes[0] ? nodes[0].id : null, lines, bytes, is_dir: exists && (() => { try { return statSync(p).isDirectory(); } catch { return false; } })() };
 }
 
 // 命令目标：脚本里有没有这个子命令（找字面量 'sub' 或 --flag）
@@ -367,17 +461,29 @@ function cmdInit() {
   mkdirSync(P.audit, { recursive: true });
   mkdirSync(P.rounds, { recursive: true });
 
-  const line = '.audit/';
+  // 两条都要：.audit/ 是审计工作区；graphify-out/ 是 `update` 没定向时的误落点。
+  // 只写 .audit/ 的话，仓根会凭空长出一张图并进 git status（issue #2 §1）。
+  const want = [
+    ['.audit/', '# 公开面审计工作区（不进版本库、不进公开面）'],
+    ['graphify-out/', '# graphify 输出目录：可能出现在仓根（update 未定向时），一律不进库'],
+  ];
   let gi = '';
   if (existsSync(P.gitignore)) gi = readFileSync(P.gitignore, 'utf8');
-  if (!/^\.audit\/?\s*$/m.test(gi)) {
+  const add = [];
+  for (const [line, note] of want) {
+    const re = new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}\\s*$`, 'm');
+    if (!re.test(gi)) add.push({ line, note });
+  }
+  if (add.length) {
     const sep = gi && !gi.endsWith('\n') ? '\n' : '';
-    writeFileSync(P.gitignore, `${gi}${sep}\n# 公开面审计工作区（不进版本库、不进公开面）\n${line}\n`, 'utf8');
-    console.log(`.gitignore 已加入 ${line}：${P.gitignore}`);
+    const block = add.map((a) => `${a.note}\n${a.line}\n`).join('\n');
+    writeFileSync(P.gitignore, `${gi}${sep}\n${block}`, 'utf8');
+    for (const a of add) console.log(`.gitignore 已加入 ${a.line}：${P.gitignore}`);
   } else {
-    console.log(`.gitignore 已含 ${line}，跳过`);
+    console.log('.gitignore 已含 .audit/ 与 graphify-out/，跳过');
   }
 
+  const out = join(P.root, OUT_REL);
   console.log(`
 审计工作区就绪：${P.audit}/
   rounds/                 每轮的取证包、发现清单、裁决记录
@@ -386,10 +492,27 @@ function cmdInit() {
   verdicts.json           裁决层账本（写前记录，读取走图）
 
 下一步（顺序固定）：
-  1. 建图：cd ${P.audit} && graphify .. --no-viz
-     —— 产物落 .audit/graphify-out/；建完核对 detect 清单不含 .audit/ 本身
+
+  1. 建图。必须用 GRAPHIFY_OUT 把输出定向到 .audit，否则 update 会把图写到
+     仓根 graphify-out/（那是另一张图，本脚本不读，增量等于白跑）：
+
+       cd ${P.root}
+       export GRAPHIFY_OUT=${out}
+       graphify update
+
+     一条命令同时完成首建与增量，且免 LLM key、零 token（本地 AST＋结构抽取）。
+     它给出代码符号 + 文档的 page/heading 结构节点。
+     有 LLM key 时另跑一次不带 --code-only 的 extract 可得文档语义节点；
+     CSS 注释等无扩展名支持的内容始终进不了图，那部分只能靠人工读。
+
+     以后每轮同一条命令：
+
+       GRAPHIFY_OUT=${out} graphify update
+
   2. 抽声称：按 references/claim-extraction-spec.md，由只读文档的新上下文产出 claims.json
-  3. node scripts/graph-audit.mjs ingest-claims --root ${P.root} --in <claims.json>`);
+  3. node scripts/graph-audit.mjs ingest-claims --root ${P.root} --in <claims.json>
+
+建完先跑 status 核覆盖：文档节点为 0 说明图只覆盖代码符号，文档类声称的语义配对不可用。`);
 }
 
 // ---------- ingest-claims ----------
@@ -404,7 +527,10 @@ function cmdIngest() {
   } catch (e) {
     die(`claims 解析失败：${e.message}`);
   }
-  const raw = Array.isArray(data) ? data : data.nodes || [];
+  // 三种形状都收：裸数组、抽取产物 {claims:[...]}、图的 {nodes:[...]}。
+  // 只认后两种会导致「账本自己写出的 {claims:[...]} 读不回去」——同一轮里
+  // ingest 写账本、下一轮想重放就得手改文件。
+  const raw = Array.isArray(data) ? data : data.claims || data.nodes || [];
   if (!raw.length) die('claims 里没有节点');
 
   const claims = raw.map((c, i) => {
@@ -485,7 +611,20 @@ function cmdQueue() {
       if (!cls || cls.kind === 'external') continue;
       if (cls.kind === 'file') {
         const ft = resolveFileTarget(g, P.root, cls.raw);
-        resolved.push({ target: t, symbol: cls.raw, kind: 'file', hit: ft.exists ? { file: cls.raw, line: 0, symbol: `文件存在（图内节点 ${ft.node_count}）`, from_graph: ft.node_count > 0, body_size: 0, probes: [], body_writes: [], exit_codes: [] } : null, file_detail: ft });
+        // 文件类目标也要核量：声称的行数/字节数在这里对上，否则"文件存在"就是空判。
+        // 只核数字类——标识符探针要扫函数体，文件目标没有"函数体"，
+        // 拿整篇散文去搜一个词只会产出噪音（"banned"/"Chinese" 这类声称量的本来就不是字面出现）。
+        const size = ft.is_dir ? `${ft.lines} 个文件/${ft.bytes} 字节` : (ft.lines != null ? `${ft.lines} 行/${ft.bytes} 字节` : '体积读不到');
+        const numProbes = probes
+          .filter((p) => /^数字\s*\d+$/.test(p.label))
+          .map((p) => {
+            const claimed = Number(p.label.match(/^数字\s*(\d+)$/)[1]);
+            const found = [];
+            if (ft.lines === claimed) found.push({ line: 0, text: `行数 ${ft.lines} 与声称一致` });
+            if (ft.bytes === claimed) found.push({ line: 0, text: `字节数 ${ft.bytes} 与声称一致` });
+            return { ...p, found, ok: found.length > 0, claimed, lines: ft.lines, bytes: ft.bytes };
+          });
+        resolved.push({ target: t, symbol: cls.raw, kind: 'file', hit: ft.exists ? { file: cls.raw, line: 0, symbol: `文件存在（图内节点 ${ft.node_count}；实测 ${size}）`, from_graph: ft.node_count > 0, body_size: ft.is_dir ? ft.lines : (ft.lines || 0), probes: numProbes, body_writes: [], exit_codes: [] } : null, file_detail: ft });
         continue;
       }
       if (cls.kind === 'command') {
@@ -605,7 +744,20 @@ function cmdQueue() {
 
   const out = [];
   out.push(`声称 ${ledger.claims.length} 条 → 不用核代码 ${selfViolations.length} / 需核实现 ${queue.length} / 跳过（已核且未变）${skipped.length}`);
-  out.push(`图基座：${P.graph}（节点 ${(g.nodes || []).length}）`);
+  const cov = graphCoverage(g);
+  out.push(`图基座：${P.graph}（节点 ${cov.total}：代码 ${cov.code}／文档 ${cov.document}／其他 ${cov.other}）`);
+  if (cov.code_only) {
+    out.push('');
+    out.push('<<< 警告：这张图 0 个文档节点，只覆盖代码符号。');
+    out.push('    文档类声称的语义配对不可用；下面的配对只对"能被符号索引命中"的声称有效。');
+    out.push('    别据此判"队列为空＝没有无据宣称"。');
+  }
+  const stray = strayGraph(P);
+  if (stray) {
+    out.push('');
+    out.push(`<<< 警告：仓根另有一张图 ${stray}——\`graphify update\` 没定向时写在那里，本脚本不读。`);
+    out.push('    本轮读的是上面这张，增量可能没生效。');
+  }
   out.push('');
 
   if (selfViolations.length) {
@@ -719,7 +871,8 @@ function cmdReconcile() {
     console.log(`符号在图中找不到（＝候选发现）：${r.missing.length} 条`);
     for (const m of r.missing) console.log(`  ${m}`);
   }
-  console.log('提醒：graphify update 会重建图，每次 update 之后都要跑本命令。');
+  console.log('提醒：源文件被删除时，图会连带驱逐该文件的审计层节点——它挂在文件上，文件没了就没有落点。');
+  console.log('      源文件还在时 update 不会冲掉审计层（实测），本命令是"确认贴回"，不是每轮必跑的补救。');
 }
 
 // ---------- status ----------
@@ -730,7 +883,31 @@ function cmdStatus() {
   const total = Object.keys(items).length;
   console.log(`审计工作区：${P.audit}`);
   console.log(`声称账本：${(ledger.claims || []).length} 条（${P.claims}）`);
-  console.log(`图基座：${existsSync(P.graph) ? P.graph : '（未建图）'}`);
+
+  const hasGraph = existsSync(P.graph);
+  console.log(`图基座：${hasGraph ? P.graph : '（未建图）'}`);
+  if (hasGraph) {
+    let g;
+    try { g = JSON.parse(readFileSync(P.graph, 'utf8')); } catch { g = null; }
+    if (g) {
+      const cov = graphCoverage(g);
+      const edges = (g.links || g.edges || []).length;
+      console.log(`  节点 ${cov.total}、边 ${edges}、覆盖文件 ${cov.files} 个（代码 ${cov.code}／文档 ${cov.document}／其他 ${cov.other}）`);
+      const claimsInGraph = (g.nodes || []).filter((n) => n._origin === OVERLAY).length;
+      if (claimsInGraph) console.log(`  图内 claim 节点 ${claimsInGraph} 条（审计层已贴图）`);
+      else if ((ledger.claims || []).length) console.log(`  图内 0 个 claim 节点——审计层没贴上图，跑 ingest-claims`);
+      warnCoverage(g, P);
+    }
+  }
+
+  // 图一致性：仓根另有一张图＝`graphify update` 没定向，本脚本读的图不会更新。
+  const stray = strayGraph(P);
+  if (stray) {
+    console.log(`\n<<< 仓根另有一张图：${stray}`);
+    console.log('    `graphify update` 没带 GRAPHIFY_OUT 就会写到那里，本脚本不读它——');
+    console.log('    结果是"增量跑了但队列没变"。删掉它，按 init 打印的命令重建。');
+  }
+
   if (!total) {
     console.log('裁决账：空');
     return;
@@ -764,12 +941,16 @@ else {
   node scripts/graph-audit.mjs status        --root <被审仓>
 
 架构：
-  图基座  .audit/graphify-out/graph.json（graphify 技能生成；--update 后须 reconcile）
+  图基座  .audit/graphify-out/graph.json（graphify 技能生成；源文件增删后跑 reconcile）
   声称层  claim 节点 ＋ claim→符号 边
   裁决层  claim 节点上的 audit_* 属性
   账本    .audit/claims.json / .audit/verdicts.json（写前记录，读取走图）
 
 它做什么：初始化审计工作区、把声称入图、按符号定位实现排出待核队列、把裁决写回图、
-在 graphify update 之后把审计层贴回。审计结论跟着内容走（文件哈希没变不再入队）。
+在源文件增删之后把审计层贴回。审计结论跟着内容走（文件哈希没变不再入队）。
 它不做什么：不下判断、不判 PASS/FAIL、不替代审计者。`);
+  // 没给子命令：打用法，exit 0（无参数调用不算错误）。
+  // 给了不认的子命令：同样打用法，但必须非零退出——否则 CI 里"敲错命令"
+  // 和"跑完没问题"都是 exit 0，脚本调用者分不出来（与 redline-check 同一条规矩）。
+  process.exit(cmd ? 2 : 0);
 }

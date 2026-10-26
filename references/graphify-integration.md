@@ -3,6 +3,20 @@
 > **本 skill 是强制依赖 graphify skill 的**：没有 graphify 技能与 graphify 命令，本 skill 不运行、不降级、不给"手工版"。
 > 判断仍是人的；但**检索、配对、记忆一律走图**。这份文件说明图在审计里承担什么、放在哪、怎么维护。
 
+## 「命令在、但没有 LLM key」怎么算
+
+这是唯一一个 skill 必须自己定义的状态，不能留给执行者临场发挥。分三档，都不是"降级退出"：
+
+| 状态 | 表现 | 怎么办 |
+|---|---|---|
+| 有 key | `graphify extract .` 成功，文档有语义节点 | 正常流程 |
+| **无 key** | `graphify extract .` 报 `no LLM API key found` | **改用 `graphify update`**——它免 key，产出代码符号 + 文档的 page/heading 结构节点。图可用，只是文档节点是结构而非语义 |
+| 无 key 且 `update` 也不可用 | 命令本身跑不起来 | 这才算没有基座：停下并报告作者，不要开审 |
+
+判据是**图里有没有节点**，不是"有没有 key"。`status` 会打印文档节点数；为 0 且代码节点 > 0 时显式警告"图只覆盖代码符号"，此时配对只对代码类声称有效。
+
+无 key 的代价是**文档语义配对变弱**（`query` 找不到"这句话在讲哪个行为"），但文档的标题结构与代码符号都还在——这已经够跑队列。**不要在无 key 时退回 `--code-only`**：那个图的文档节点是 0，配对能力实际已失效，却和正常图长得一样，最容易被误当成"干净"。
+
 ## 为什么是地基而不是配件
 
 审计的本质是**跨载体一致性**：文档说 X，实现是 Y。这句话展开就是一堆"声称 ↔ 实现"的多对多关系，还要跨轮次记住"哪些核过、改没改"。这正是图的形状：
@@ -40,18 +54,20 @@
 | 声称层 | claim 节点 ＋ claim→符号 配对边 | 同一张图（`_origin: "audit-overlay"`） | `graph-audit ingest-claims` |
 | 裁决层 | claim 节点上的 `audit_*` 属性 | 同一张图 | `graph-audit record` |
 
-**读取一律走图**：排队看 claim 节点与配对边，跳过判断看 `audit_verdict` 与 `audit_file_hash`。两个账本（claims.json／verdicts.json）只是写前记录——因为 `graphify update` 会重建图、把审计层冲掉，`graph-audit reconcile` 用账本贴回。**每次 graphify update 之后必须跑 reconcile**，否则会拿一张"没有记忆的图"排队。
+**读取一律走图**：排队看 claim 节点与配对边，跳过判断看 `audit_verdict` 与 `audit_file_hash`。两个账本（claims.json／verdicts.json）是写前记录——`graph-audit reconcile` 用它们把审计层贴回图。
+
+> 关于"update 会不会冲掉审计层"：**实测不会**。`update` 与 `extract --force` 都会保留 `_origin: audit-overlay` 的节点及其边；只有**源文件被删除**时，挂在该文件上的 claim 节点才会被连带驱逐（节点没有落点了）。所以 `reconcile` 不是"每轮必跑的补救"，而是"贴回确认"——跑它是为了在源文件增删之后把记忆补回来。
 
 ## 标准流程（五步的图化形态）
 
 ```bash
-# 0 · 初始化（每仓一次）
+# 0 · 初始化（每仓一次）——打印建图命令并写 .gitignore
 node scripts/graph-audit.mjs init --root <被审仓>
 
-# 1 · 建图（首轮）／增量（以后每轮）
-cd <被审仓>/.audit && graphify .. --no-viz          # 首轮
-graphify update                                     # 以后：只重抽改过的
-node scripts/graph-audit.mjs reconcile --root <被审仓>   # update 之后必跑
+# 1 · 建图（首轮）／增量（以后每轮）——同一条命令
+cd <被审仓>
+export GRAPHIFY_OUT=<被审仓>/.audit/graphify-out   # 必须！否则图写到仓根，本脚本不读
+graphify update
 
 # 2 · 抽声称（只读文档的新上下文，按 references/claim-extraction-spec.md）
 #      产出 claims.json
@@ -76,6 +92,32 @@ node scripts/graph-audit.mjs status --root <被审仓>
 | 02 扇出 | 审计者只拿取证包（不拿图） | 每批 `02-findings-B{n}.md` |
 | 03 裁决 | ingest-claims 入图 → queue 排队（符号定位实现、量对照）→ record 记裁决 | `03-adjudication.md` ＋ 图上裁决属性 |
 | 04 收口 | status 汇总四值；判定计数与批次 FAIL 对齐 | `04-close.md` |
+
+## 查图：图的用处不在建，在查
+
+只建图不查图，等于买了个索引却不翻。下面这些命令在配对和定位上直接省掉整轮翻源码，**都用同一个 `GRAPHIFY_OUT`**：
+
+| 命令 | 什么时候用 | 实测收益 |
+|---|---|---|
+| `graphify explain <符号>` | 要某符号的完整调用链（带行号、含上下游） | 一条命令给出 `L145 → L156 → L179`，不必读整个文件 |
+| `graphify query "<词>" --budget 600` | 抽声称时先缩范围：文档提到某个行为，先看它在哪些符号附近 | 命中几个符号再精读命中段，比通读便宜一到两个数量级 |
+| `graphify affected <符号>` | 改实现前要知道会波及谁 | 判"某句承诺还成不成立"时先看影响面 |
+| `graphify god-nodes` | 定标时找架构枢纽 | 枢纽附近的公开面描述最容易糊（大家都以为它显然） |
+
+**`--budget` 要小，且要实测。** 在 373 节点 / 352 边的真图上扫过一轮（`query "redline"`）：
+
+| 预算 | 输出字符 |
+|---|---|
+| 200 | 1,212 |
+| 400 | 1,793 |
+| 600 | 2,330 |
+| 700 | 2,679 |
+| **750** | **5,696 ← 突然翻倍** |
+| 默认 / 2000+ | 5,351 |
+
+预算过了一个阈值就失效（输出比默认还大），所以**不要照抄一个数就走**——先用小预算跑一次，看输出量涨没涨。`--depth` 实测无效（与默认一致），别指望它。
+
+`explain` 与 `affected` 是符号级的，文档类声称（"保证可读""设计得体面"）它们永远命中不了——那部分靠人读，见文末。
 
 ## 一条不许越的界：图给主持者，不给审计者
 
@@ -105,9 +147,23 @@ node scripts/graph-audit.mjs status --root <被审仓>
 ## 实测陷阱（每条都真踩过）
 
 1. **`.audit/` 卷进被审文件集**：建图后必须核一次 detect 清单。`redline-check.mjs` 已跳过 `node_modules`、`.git`、`.audit`、`graphify-out`——但**别的扫描工具未必**，换工具时先确认它排不排 `.audit/`。
-2. **`graphify update` 只重跑代码 AST**：文档改动要显式重跑语义抽取；改完必跑 `reconcile`，否则审计层被冲掉、图上没有记忆。
-3. **词频配对不可用**（已被符号配对取代，留档）：靠"共同的词"配对在 41 文件真语料上排出 3 条**全部误报**——`check`、`push` 这类词到处都是。根因是 AST 只给函数名不给函数体，量的事实在图里不存在。**配对靠符号，不靠词**：抽取时就写出 `targets: ["shipAssets check"]`，配对变成在图里找符号节点；而"符号找不到"本身变成一条硬发现（词频法永远得不出它，`verify` 这个词在别处出现只会稀释信号）。
-4. **裁决不带文件哈希**：record 时文件不可读就没记到哈希，该条永远会重新入队——提示信息会明说，别忽略。
+2. **`graphify update` 会把图写到仓根**（最容易踩）。`update` 写的是「目标目录上一级的 `graphify-out/`」，**不接受 `--out`**（`error: unknown update option: --out`）。按 `cd .audit && graphify update` 跑，图就落在仓根，而脚本读 `.audit/graphify-out/`——两条路各写各的图，**增量永远不生效，队列一直读旧图**。正确做法是设 `GRAPHIFY_OUT=<被审仓>/.audit/graphify-out`（绝对路径，与当前目录无关）。`status` 与 `queue` 检测到仓根另有一张图会显式报警。
+3. **首建不必用 `extract`**：无 LLM key 时 `graphify extract .` 直接失败，`--code-only` 又只给代码节点（文档 0 个）。**`graphify update` 从零跑就能建图**，且免 key 产出文档的 page/heading 结构节点。文档节点靠它，语义节点才需要 key。
+4. **`--force` 只在需要时用**：图提示「pre-#1504 node-ID scheme」时跑 `extract --force` 换全路径 ID，避免同名文件撞车。日常增量不需要。
+5. **词频配对不可用**（已被符号配对取代，留档）：靠"共同的词"配对在真语料上排出 3 条**全部误报**——`check`、`push` 这类词到处都是。配对靠符号，不靠词。
+6. **裁决不带文件哈希**：record 时文件不可读就没记到哈希，该条永远会重新入队——提示信息会明说，别忽略。
+
+## 图的硬边界：CSS 与无扩展名文件进不来
+
+`graphify` 只对认得的扩展名抽节点。实测一个含 `base.css` 的仓：
+
+```
+[graphify extract] 1 file(s) not classified (no supported extension or shebang), skipped: base.css
+```
+
+样式文件里的注释往往正是公开面（"卡片圆角 8px"这类承诺就写在注释里），**它们永远进不了图**。这不是配置问题，是支持范围问题。
+
+处置：**注释体文件（CSS/SCSS/Less）的公开面由人直接读，不要指望图能覆盖**。抽声称时把这类文件单列一批，`00-scope.md` 里写明"本批无图可依"。同理，图里 0 个文档节点时 `queue` 的配对能力只对代码符号有效——脚本会在 `status` 与 `queue` 顶部显式警告，不要看着"队列为空"就判"没有无据宣称"。
 
 ## 图替代不了的三件事
 

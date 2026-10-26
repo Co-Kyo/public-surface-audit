@@ -14,19 +14,25 @@
    - 文档站整站 → 按页组切，每批 3–5 页；同批页面主题相近，读者读得连贯；
    - 安装包内文件 → 1 批；公开仓库文件 → 产品面 1 批、协作面 1 批（两者守的红线不同，见宪章通道三）；
    - 运行时生成物 → 按步骤目录切，每批 3–4 个文件。
+   - **注释体文件（CSS/SCSS/Less、纯配置文件）不按字节算，按注释算**：一个 3,600 行的样式表，公开面可能只有 400 行注释，正文 `display:flex` 对审计者是零信息。这类文件可以合批，也可以按注释量切——但不要因为"文件大"就切成三批。
+
+   **批次数本身有成本。** 每批都要付一次固定开销（宪章＋简报模板全文，实测约 22KB）。切得太碎，固定开销会超过被审文字本身。粗算：`批次数 × 22KB` 应显著小于被审面总量；超过就先并批。宁可单批厚一点，不要十个薄批各贴一遍宪章。
 4. **标性质门**。每批标一句：这批主要是**工具承诺句**（"会 X／保证 X"，须有对应测试或构建期检查）、**技能意图句**（写给 agent 的流程说明，不逐句索实证）还是**纯叙述**（只查文体红线）。标错会让审计者索错证据。
 
 5. **初始化工作区与建图（每仓首次跑 init，之后每轮跑更新）**：
 
    ```bash
-   node scripts/graph-audit.mjs init --root <被审仓>       # 建 .audit/ 并自动写 .gitignore
-   cd <被审仓>/.audit && graphify .. --no-viz              # 首轮建图
-   graphify update                                         # 以后每轮：只重抽改过的
-   node scripts/graph-audit.mjs reconcile --root <被审仓>   # update 之后必跑
+   node scripts/graph-audit.mjs init --root <被审仓>   # 建 .audit/、写 .gitignore、打印建图命令
+   cd <被审仓>
+   export GRAPHIFY_OUT=<被审仓>/.audit/graphify-out   # 必须，否则图写到仓根
+   graphify update                                     # 首建与增量是同一条命令
    ```
+
+   **这一步的 `GRAPHIFY_OUT` 不能省。** `graphify update` 写入「目标目录上一级的 `graphify-out/`」，且不接受 `--out`：在 `.audit` 里跑它就写到仓根，而脚本读 `.audit/graphify-out/`，增量从此无效。`status` 检测到仓根另有一张图会报警。
 
    图是圈文件集的基础：节点去重**接近**文件全集，但不是全集——无扩展名的文件（`LICENSE`、`.gitignore`）会被抽取跳过，须手工补进圈。社区分组比目录更接近"主题相近"（切批次时用），既不在文档社区也不在代码社区的孤岛节点往往就是最容易漏的那批公开面。
    **建完核对一次 detect 清单**：`.audit/` 下的文件不得出现在被审文件集里——它是审计工具自己的影子，不是被审面。详见 `references/graphify-integration.md`。
+   **再核一次图覆盖**：`node scripts/graph-audit.mjs status --root <被审仓>` 看文档节点数。为 0 说明图只覆盖代码符号，文档类声称靠人读——把它记进本轮 `00-scope.md`，别指望队列。
 
 ## 批次清单格式
 

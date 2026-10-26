@@ -56,13 +56,15 @@ requires: graphify
 
 **本 skill 建立在 graphify skill 之上，是硬依赖**：graphify 技能或 graphify 命令缺一，本 skill 停止并报告，**不降级、不给"手工版"**。判断仍是人的；检索、配对、记忆一律走图。架构、维护与实测陷阱见 `references/graphify-integration.md`。
 
+**「命令在、但没有 LLM key」不算缺依赖**：改用 `graphify update`（免 key，产出代码符号＋文档结构节点），不要退回 `--code-only`——那个图文档节点为 0，配对已失效却和正常图长得一样。判据是图里有没有节点，不是有没有 key。
+
 ### 审计工作区住在被审仓里
 
 审计记忆属于被审对象：谁的公开面被审，工作区就放谁的根目录。`node scripts/graph-audit.mjs init --root <被审仓>` 一次性建立：
 
 ```
 <被审仓>/.audit/                  ← init 自动写进 .gitignore（不进版本库、不进公开面）
-  graphify-out/graph.json         图基座（graphify 生成；update 后必须 reconcile）
+  graphify-out/graph.json         图基座（graphify 生成；源文件删除后跑 reconcile 补记忆）
   claims.json / verdicts.json     账本（写前记录，读取走图）
   rounds/{日期}-{slug}/           每轮产物
 ```
@@ -73,14 +75,18 @@ init 之后核对一次 detect 清单：**`.audit/` 下的文件不得出现在�
 
 ```bash
 node scripts/graph-audit.mjs init --root <被审仓>          # 每仓一次
-cd <被审仓>/.audit && graphify .. --no-viz                 # 首轮建图；以后 graphify update
-node scripts/graph-audit.mjs reconcile --root <被审仓>     # update 之后必跑
+cd <被审仓> && export GRAPHIFY_OUT=<被审仓>/.audit/graphify-out
+graphify update                                            # 首建与增量同一条；免 key、零 token
 # 抽声称：只读文档的新上下文，按 references/claim-extraction-spec.md 产出 claims.json
 node scripts/graph-audit.mjs ingest-claims --root <被审仓> --in claims.json
 node scripts/graph-audit.mjs queue --root <被审仓>          # 待核队列
 node scripts/graph-audit.mjs record --root <被审仓> --item <id> --verdict <四值>
 node scripts/graph-audit.mjs status --root <被审仓>
 ```
+
+**`GRAPHIFY_OUT` 是这条链上最容易漏的一环**：`graphify update` 不接受 `--out`，写的是「目标目录上一级的 `graphify-out/`」。不设这个变量、或按老写法 `cd .audit && graphify update`，图就落到仓根——而脚本读 `.audit/graphify-out/`，从此增量全白跑。`status` 与 `queue` 发现仓根另有一张图会显式报警。
+
+查图比建图更省事：`graphify explain <符号>` 一条命令给完整调用链带行号；`graphify query "<词>" --budget 600` 先缩范围再精读。预算不是越大越好（实测过阈值输出反而翻倍），详见 `references/graphify-integration.md`。
 
 **记忆就是图本身**：图基座（文件、符号、社区）＋声称层（claim 节点与 claim→符号 配对边）＋裁决层（claim 节点上的 `audit_verdict` 等属性）三层合一。文件内容哈希没变的声称不再入队——**审计跟着内容走，不跟着时间走**。
 
@@ -156,6 +162,8 @@ node scripts/graph-audit.mjs status --root <被审仓>
 ```
 
 规则：**已完成步骤的产物不重做**；未完成步骤重跑时沿用已有 STATE.md。裁决必须一次做完（跨会话裁决会失去行号上下文，重开原文核）。
+
+**中断就写 STATE.md，不分步骤。** 00 定标、01 装配、02 扇出中断时同样要写——前两步中断时轮次目录里可能只有半张批次表、几个包，不写 STATE 下一轮就不知道该重来还是接着做。断点续写是全局机制，不是收尾步骤的附属。
 
 ## 怎么调用
 

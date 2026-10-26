@@ -22,7 +22,7 @@
 2. **收口**。作者批改写方案 → 改完 → 受影响批次复审 → 全部批次 PASS → 写 `04-close.md` 并记门凭据：
    "本轮（{YYYY-MM-DD}-{slug}）公开面审计：各通道各批 PASS，可发布。"
 3. **门凭据只写在收口这一刻**，且必须能指到 `03-adjudication.md` 的逐条证据——指不到就不算凭据。
-4. **过程产物可删，记忆留下**：`.audit/rounds/{YYYY-MM-DD}-{slug}/` 跑完即可删——收口记录已归档，记录在就行。中断没跑完的，先更新 `STATE.md` 再走。`.audit/graphify-out/`、`claims.json`、`verdicts.json` 是跨轮记忆，留着；若本轮跑过 `graphify update`，确认 `graph-audit reconcile` 已把审计层贴回图上。
+4. **过程产物可删，记忆留下**：`.audit/rounds/{YYYY-MM-DD}-{slug}/` 跑完即可删——收口记录已归档，记录在就行。中断没跑完的，先更新 `STATE.md` 再走。`.audit/graphify-out/`、`claims.json`、`verdicts.json` 是跨轮记忆，留着；本轮若增删过源文件，用 `graph-audit reconcile` 把被驱逐的审计层补回图上（`update` 本身不会冲掉审计层，只有源文件消失才会）。
 5. **涉及 push／tag／publish**：停在发布门前，本程序不执行发布。
 
 ## 什么时候本程序判为失败

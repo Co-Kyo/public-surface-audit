@@ -86,7 +86,14 @@ git clone <repo-url> .claude/skills/public-surface-audit
 cp -r public-surface-audit ~/.claude/skills/
 ```
 
-每个仓装一次：`node scripts/graph-audit.mjs init --root .` 建出 `.audit/` 并写进 `.gitignore`，再由 graphify 技能建图。此后跑一轮审计就是几条命令——见下文"建立在 graphify 之上"。
+每个仓装一次：`node scripts/graph-audit.mjs init --root .` 建出 `.audit/`、把 `.audit/` 与 `graphify-out/` 写进 `.gitignore`，并打印建图命令。然后建一次图：
+
+```bash
+export GRAPHIFY_OUT=$PWD/.audit/graphify-out   # 必须——原因见下文"建立在 graphify 之上"
+graphify update                                 # 首建与以后每轮的增量都是这条，不需要 API key
+```
+
+此后跑一轮审计就是几条命令——见下文"建立在 graphify 之上"。
 
 **语言边界：** 参考件为中文，技术词保留英文（PASS/FAIL、diff、CLI、批次号、`file:line`）。本页是中文入口，判断体在宪章里。
 
@@ -140,7 +147,11 @@ cp -r public-surface-audit ~/.claude/skills/
 | 声称层 | claim 节点 ＋ claim→符号 配对边 | `graph-audit ingest-claims` |
 | 裁决层 | claim 节点上的 `audit_verdict` 等属性 | `graph-audit record` |
 
-**记忆就是图本身。** 文件内容哈希没变的声称下轮不再入队；改过的重新入队并带上上轮裁决。**判断跟着内容走，不跟着时间走。**（`graphify update` 之后跑 `graph-audit reconcile`——重建会冲掉审计层，账本负责贴回。）
+**记忆就是图本身。** 文件内容哈希没变的声称下轮不再入队；改过的重新入队并带上上轮裁决。**判断跟着内容走，不跟着时间走。** `graphify update` 会保留审计层（实测），但**源文件被删掉时**，挂在它上面的 claim 节点会被连带驱逐——文件增删之后跑一次 `graph-audit reconcile` 把记忆补回来。
+
+**一个环境变量撑着整条图链。** `graphify update` 不接受 `--out`，它写到「目标目录上一级的 `graphify-out/`」。在 `.audit` 里跑它就落到仓根，而脚本读 `.audit/graphify-out/`——从此增量静默失效。设 `GRAPHIFY_OUT=<仓>/.audit/graphify-out`（绝对路径，与当前目录无关），`extract` 与 `update` 才在同一条链上。仓根另有一张图时 `graph-audit status` 会报警。
+
+**没有 API key 不是死路。** `graphify extract .` 处理文档需要 LLM key，`graphify update` 不需要——它产出代码符号加上文档的结构节点（page／heading），够跑队列。**不要退回 `--code-only`**：它的文档节点是 0，配对已失效，却和正常图长得一样。
 
 **大部分违规根本不用核代码。** 标为 `future`／`process`／`quality` 的声称（未来时、开发过程史、自我夸赞）本身就是违规——分别是红线 6、2、9，直接进发现清单。
 

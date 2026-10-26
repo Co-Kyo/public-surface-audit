@@ -132,5 +132,12 @@ for (const file of files) {
 if (statMode) for (const [f, n, sk] of rows) console.log(`${String(n).padStart(4)}  ${f}${sk ? '  （整文件跳过）' : ''}`);
 console.log(`\n扫描 ${files.length} 个文件，命中 ${hits} 条`);
 if (skipped) console.log(`（其中 ${skipped} 个文件带文件级放行指令，整文件跳过）`);
+// 一个文件都没扫到，和"扫了、干净"的输出形态几乎一样（都是 0 命中），
+// 但结论完全相反。CI 与脚本调用者区分不出来，所以这里必须非零退出。
+if (!files.length) {
+  console.error('错误：没有可扫描的文件（路径不存在、目录为空，或一个 .md/.mdx/.txt 都没有）');
+  console.error('      "0 命中"只在真的读了文件时才作数。');
+  process.exit(2);
+}
 // 退出码：0 零命中 / 1 有命中 / 2 用法错误或路径读不了（优先，免得读取失败被当成"干净"）
 process.exit(process.exitCode === 2 ? 2 : hits ? 1 : 0);
