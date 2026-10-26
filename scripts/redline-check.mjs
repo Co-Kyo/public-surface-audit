@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// redline-check —— 公开面「词表召回」工具：按词面扫一遍，把可疑行交给审计者裁决。
+// redline-check —— 公开面「词表召回」工具：按词面扫一遍，把可疑行交给裁决环节。
 //
 // 这不是门。脚本清零 ≠ 可发布：语气、弃留、红线 10/11 它都看不见，审计 PASS 才是门。
 // 误报处理：行尾加 <!-- redline-ok --> 跳过该行；`examples/before-after/*/before.md` 这类

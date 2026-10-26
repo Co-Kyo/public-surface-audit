@@ -18,7 +18,7 @@
 //   status        --root <被审仓>                          记忆账汇总
 //
 // 它不判对错。量对不上也可能是主持者读错，必须逐条打开原文确认
-// （references/procedure/03-adjudicate.md「不做转述式验收」）。
+// （references/procedure/02-verdict.md「不做转述式验收」）。
 // Node ≥ 18，ESM，零依赖。
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -546,7 +546,7 @@ function cmdInit() {
   const out = join(P.root, OUT_REL);
   console.log(`
 审计工作区就绪：${P.audit}/
-  rounds/                 每轮的取证包、发现清单、裁决记录
+  rounds/                 每轮的证据单、裁决表、复查与收口记录
   graphify-out/graph.json 图基座（由 graphify 技能生成与更新）
   claims.json             声称层账本（写前记录，读取走图）
   verdicts.json           裁决层账本（写前记录，读取走图）
@@ -899,7 +899,7 @@ function cmdQueue() {
 
   out.push('说明：本清单只把"声称的量"与"实现里的量"摆在一起，**不判定对错**。');
   out.push('      量对不上也可能是主持者读错（同名函数、分支差异），须逐条打开原文确认——');
-  out.push('      见 references/procedure/03-adjudicate.md「不做转述式验收」。');
+  out.push('      见 references/procedure/02-verdict.md「不做转述式验收」。');
 
   console.log(out.join('\n'));
 
@@ -1031,7 +1031,7 @@ else {
 
 它做什么：初始化审计工作区、把声称入图、按符号定位实现排出待核队列、把裁决写回图、
 在源文件增删之后把审计层贴回。审计结论跟着内容走（文件哈希没变不再入队）。
-它不做什么：不下判断、不判 PASS/FAIL、不替代审计者。`);
+它不做什么：不下判断、不判 PASS/FAIL、不替代裁决。`);
   // 没给子命令：打用法，exit 0（无参数调用不算错误）。
   // 给了不认的子命令：同样打用法，但必须非零退出——否则 CI 里"敲错命令"
   // 和"跑完没问题"都是 exit 0，脚本调用者分不出来（与 redline-check 同一条规矩）。

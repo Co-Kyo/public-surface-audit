@@ -4,7 +4,7 @@
 
 > **让陌生读者先读过，再发布。** 本程序审的**公开面**，是团队以外的人能读到的每一个字——它把这些字交给第一次见到它们的读者逐条审，按批次出 PASS/FAIL。没过的那一批，不发布。
 
-Agent Skill · 两种模式 · 五步程序 · 11 条红线 · MIT
+Agent Skill · 两种模式 · 四步程序 · 11 条红线 · MIT
 
 ## 问题出在哪
 
@@ -23,28 +23,28 @@ Agent Skill · 两种模式 · 五步程序 · 11 条红线 · MIT
 | 不是这个 | 边界划在哪 |
 |---|---|
 | 不是文案润色、SEO、翻译 | 它不把句子改漂亮，也不争排名。它判的是这句话该不该出现在陌生人眼前。 |
-| 不是词表扫描器 | [`scripts/redline-check.mjs`](scripts/redline-check.mjs) 是审计者手里的召回工具。**脚本清零 ≠ 可发布**——语气、弃留、红线 10 与 11，正则一概看不见。 |
-| 不读你的源码替你验实现 | 它标出无据宣称并路由回去。队列会*定位*实现、把声称的量与实际的量并列，但**不下判断**——把每句承诺对上源码签名，仍是主持者在裁决步做的活。它不替你做判断。 |
+| 不是词表扫描器 | [`scripts/redline-check.mjs`](scripts/redline-check.mjs) 是召回工具，不是门。**脚本清零 ≠ 可发布**——语气、弃留、红线 10 与 11，正则一概看不见。 |
+| 不读你的源码替你验实现 | 它标出无据宣称并路由回去。队列会*定位*实现、把声称的量与实际的量并列，但**不下判断**——把每句承诺对上源码签名，仍是裁决步里你自己做的活。它不替你做判断。 |
 | 不承诺内容写得好不好 | 写得好不好归写作层，不属于工具承诺。把两者混说正是红线 9——本程序不做它自己审的那件事。 |
 
 ## 怎么跑
 
-五步。主持者负责跑程序，每个批次由一个全新上下文的审计者出判。
+四步。绝大部分工作就在你已经在的这个会话里完成——图做机械配对，你做判断，最后一个陌生读者补上你看不见的那一块。
 
 | 步 | 干什么 | 谁做 | 产物 |
 |---|---|---|---|
-| 00 | **定标**：圈文件集、切批次、给每批标性质门 | 主持者 | 批次清单 |
-| 01 | **装配取证包**：一批一份自足简报 | 主持者 | 每批一份包 |
-| 02 | **扇出审计**：一批一个审计者，各批并行 | 审计者（新上下文） | 发现清单 |
-| 03 | **合并裁决**：逐条打开原文核对，出 PASS/FAIL | 主持者 | 裁决表 |
-| 04 | **路由收口**：每条发现落到该落的地方，门给凭据 | 主持者 | 台账＋门凭据 |
+| 00 | **定标**：圈文件集、切批次、给每批标性质门 | 你 | 批次清单 |
+| 01 | **取证**：**先只读文本**记下它声称了什么，再逐条对实现核量 | 你 | 证据单 |
+| 02 | **裁决**：逐条打开原文核对，出 PASS/FAIL | 你 | 裁决表 |
+| 03 | **对抗复查与收口**：一个陌生读者冷读一遍，然后路由、给门凭据 | 复查者＋你 | 复查记录＋收口记录 |
 
-撑起这套程序的只有两条规矩：
+撑起这套程序的只有三条规矩：
 
-- **每个批次一个全新上下文的审计者。** 它只拿到宪章和这一批的文字——没有写作过程，没有你想要表达什么，也没有别的批次。它的全部价值就在于：它不知道你为什么这么写。
+- **先文本后代码。** 在打开实现之前，先记下这句话声称了什么。`claims.json` 的写入早于任何 `queue` 输出，所以顺序可查——从实现出发去抽声称，抽出来的已经知道答案了。
 - **批次不重叠。** 一个文件只归一批。否则同一句话被两套判据同时过，而漏检就藏在两批之间的缝里。
+- **一个陌生读者，只一次，在收口前。** 不是每批一个。它只拿到文本和宪章——没有裁决表、没有源码、没有图。它不判违规，只报告"第一次读到这里我的反应是什么"，怎么处置由你定。
 
-各步细则见 [`references/procedure/00-scope.md`](references/procedure/00-scope.md) 至 [`references/procedure/04-route-close.md`](references/procedure/04-route-close.md)。
+各步细则见 [`references/procedure/00-scope.md`](references/procedure/00-scope.md) 至 [`references/procedure/03-close.md`](references/procedure/03-close.md)。
 
 ## 抓什么
 
@@ -105,7 +105,7 @@ graphify update                                 # 首建与以后每轮的增量
 
 > 按这次要发的范围跑一次公开面审计：diff 里的全部文件，加上每次发布都会重新公开的那些——README、包页描述、CHANGELOG。
 
-预期 `.audit/rounds/{date}-{slug}/` 会逐渐填满：批次清单、每批一份取证包与发现清单、一张裁决表，以及一句门凭据或一份待处理的 FAIL 清单。
+预期 `.audit/rounds/{date}-{slug}/` 会逐渐填满：批次清单、每批一份证据单、一张裁决表、一份复查记录，以及一句门凭据或一份待处理的 FAIL 清单。
 
 **开源前的存量全扫**
 
@@ -117,7 +117,7 @@ graphify update                                 # 首建与以后每轮的增量
 
 > 这份 README 能发吗？
 
-预期产物：一个批次、一份带 `file:line` 的发现清单、一个 PASS/FAIL，以及要改的那几行原句。
+预期产物：一个批次、一张带 `file:line` 的裁决表、一个 PASS/FAIL，以及要改的那几行原句。
 
 ## 产物长什么样
 
@@ -127,10 +127,10 @@ graphify update                                 # 首建与以后每轮的增量
 .audit/rounds/{date}-{slug}/
 ├── STATE.md            跑到哪了：已完成步骤、各批状态
 ├── 00-scope.md         文件集、批次划分、每批的性质门
-├── 01-package-B1.md    B1 的取证包（自足输入）
-├── 02-findings-B1.md   B1 的发现清单
-├── 03-adjudication.md  逐条 PASS/FAIL，每条带原文 file:line
-└── 04-close.md         每条发现去了哪，以及门凭据
+├── 01-evidence-B1.md   B1 的证据单：先记它声称什么，再记量对上了没有
+├── 02-verdict.md       逐条 PASS/FAIL，每条带原文 file:line
+├── 03-review.md        陌生读者读到了什么，以及你怎么处置
+└── 03-close.md         每条发现去了哪，以及门凭据
 ```
 
 门凭据只有一句话，写在全部批次 PASS 之后，并且必须能指回裁决表里的逐条证据。指不回去，就不算凭据。
@@ -153,11 +153,11 @@ graphify update                                 # 首建与以后每轮的增量
 
 **没有 API key 不是死路。** `graphify extract .` 处理文档需要 LLM key，`graphify update` 不需要——它产出代码符号加上文档的结构节点（page／heading），够跑队列。**不要退回 `--code-only`**：它的文档节点是 0，配对已失效，却和正常图长得一样。
 
-**大部分违规根本不用核代码。** 标为 `future`／`process`／`quality` 的声称（未来时、开发过程史、自我夸赞）本身就是违规——分别是红线 6、2、9，直接进发现清单。
+**大部分违规根本不用核代码。** 标为 `future`／`process`／`quality` 的声称（未来时、开发过程史、自我夸赞）本身就是违规——分别是红线 6、2、9，直接进裁决表。
 
 **符号找不到本身就是发现。** 图与源码里都没有 `verify`，说明文档描述了一个不存在的东西——这是置信度最高的信号。**配对靠符号，不靠词**：`check`、`push` 这类词到处都是，靠词面匹配只会淹没在误报里。
 
-**队列不下判断。** 它只把"文档说会怎样"与"函数体实际怎样"并列；对不上也可能是读错，每条仍须对原文确认。队列为空不等于公开面干净——"我们保证写得专业"在代码里根本没有对应物。架构与实测陷阱见 [`references/graphify-integration.md`](references/graphify-integration.md)。
+**队列不下判断。** 它只把"文档说会怎样"与"函数体实际怎样"并列；对不上也可能是你读错，每条仍须对原文确认。**它给的是"哪段文字关于这个主题"，不是"这句话违不违规"**——拿它问一个语气问题，它会返回几十个相关节点，一个都不回答问题。队列为空也不等于公开面干净——"我们保证写得专业"在代码里根本没有对应物。架构与实测陷阱见 [`references/graphify-integration.md`](references/graphify-integration.md)。
 
 ## 自检
 
@@ -165,25 +165,25 @@ graphify update                                 # 首建与以后每轮的增量
 
 - [`self-check.yml`](.github/workflows/self-check.yml) 每次 push 和 PR 都在仓库自身上跑 `node scripts/redline-check.mjs --stat .`。
 - [`examples/before-after/`](examples/before-after/) 是真实改写，每组标注违反了哪条红线。
-- [`examples/walkthrough/`](examples/walkthrough/) 记录一次完整五步实录，从定标一直跑到收口。这一轮里词表召回零命中，裁决仍成立 5 条——"门是审计不是脚本"在这份实录里是跑出来的，不是说的。
+- [`examples/walkthrough/`](examples/walkthrough/) 记录一次完整实录，从定标一直跑到收口。这一轮里词表召回零命中，裁决仍成立 5 条——"门是审计不是脚本"在这份实录里是跑出来的，不是说的。
 
 这个程序先过自己的门，再来要求你过你的门。
 
 ## 仓库地图
 
 ```
-SKILL.md                          入口：什么时候用、两种模式、五步、六条硬规矩
+SKILL.md                          入口：什么时候用、两种模式、四步、六条硬规矩
 references/charter.md             判断体：读者、五条通道、11 条红线、翻译规则
-references/procedure/*.md          五步各自的执行细则
-references/brief-template.md      审计简报模板，逐字照贴
-references/findings-format.md     发现清单必须照此写的格式
-references/regression-exam.md     9 题回归考卷，正式开审前给审计者记分
+references/procedure/*.md          四步各自的执行细则
+references/review-brief.md        对抗复查简报，逐字照贴
+references/verdict-format.md      证据单与裁决表的格式
+references/regression-exam.md     9 题回归考卷，正式开审前校准判据
 references/graphify-integration.md  图基座：强制依赖、.audit 工作区、三层结构
 references/claim-extraction-spec.md 把"这个工具会 X"抽成可核验的声称节点
 scripts/graph-audit.mjs           图操作：init／ingest／queue／record／reconcile
-scripts/redline-check.mjs         词表召回：审计者的助手，不是门
+scripts/redline-check.mjs         词表召回：助手，不是门
 examples/before-after/            真实改写对照，按红线编号标注
-examples/walkthrough/             一次完整五步实录
+examples/walkthrough/             一次完整实录
 .github/workflows/self-check.yml  自己扫自己：召回脚本扫本仓
 LICENSE                           MIT
 ```

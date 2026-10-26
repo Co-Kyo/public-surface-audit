@@ -4,7 +4,7 @@
 
 > **Publish only after strangers have read it.** The *outward surface* is every word your project shows to outsiders — and this Agent Skill puts all of it in front of readers who have never seen it, ruling PASS/FAIL per batch. A batch that fails does not ship.
 
-An Agent Skill · two modes · five steps · eleven redlines · MIT
+An Agent Skill · two modes · four steps · eleven redlines · MIT
 
 ## The problem
 
@@ -23,28 +23,28 @@ This section is itself one of the five finished forms in the charter's translati
 | Not this | Why the line is drawn here |
 |---|---|
 | Copywriting, SEO, or translation | It does not make prose prettier or pages rank. It rules on whether a sentence belongs in front of a stranger. |
-| A wordlist scanner | [`scripts/redline-check.mjs`](scripts/redline-check.mjs) is a recall tool in the auditor's hands. **A clean script run does not mean the outward surface is publishable** — tone, the keep-or-cut call, and redlines 10–11 are invisible to regex. |
-| A check that your implementation is real | It flags unbacked claims and routes them back to you. The queue *locates* the implementation and lines up the claimed quantity against the real one, but it renders no verdict — confirming each promise against the source is the moderator's job in adjudication. It does not judge your code for you. |
+| A wordlist scanner | [`scripts/redline-check.mjs`](scripts/redline-check.mjs) is a recall tool, not the gate. **A clean script run does not mean the outward surface is publishable** — tone, the keep-or-cut call, and redlines 10–11 are invisible to regex. |
+| A check that your implementation is real | It flags unbacked claims and routes them back to you. The queue *locates* the implementation and lines up the claimed quantity against the real one, but it renders no verdict — confirming each promise against the source is your job in adjudication. It does not judge your code for you. |
 | A promise that the writing is any good | Content quality belongs to the writing layer. Claiming it would be redline 9 — this program does not commit the thing it audits. |
 
 ## How it works
 
-Five steps. The moderator runs the procedure; a fresh auditor per batch does the judging.
+Four steps. Most of the work happens in the session you are already in — the graph does the mechanical pairing, you do the judging, and one adversarial reader checks the part you cannot see.
 
 | # | Step | Who | Artifact |
 |---|---|---|---|
-| 00 | **Scope** — list the files, cut batches, tag each batch's nature gate | Moderator | batch list |
-| 01 | **Assemble the evidence package** — one self-contained brief per batch | Moderator | one package per batch |
-| 02 | **Fan out** — one auditor per batch, all batches in parallel | Auditor (new context) | findings list |
-| 03 | **Adjudicate** — open every cited line in the original file and rule PASS/FAIL | Moderator | adjudication table |
-| 04 | **Route and close** — every finding goes somewhere; the gate issues its credential | Moderator | ledger + gate credential |
+| 00 | **Scope** — list the files, cut batches, tag each batch's nature gate | You | batch list |
+| 01 | **Evidence** — read the text *first* and record what it claims, then pair each claim against the implementation | You | evidence sheet |
+| 02 | **Verdict** — open every cited line in the original file and rule PASS/FAIL | You | verdict table |
+| 03 | **Adversarial review and close** — one stranger reads the text cold, then routing and the gate credential | Reviewer + you | review + close record |
 
-Two rules carry most of the weight:
+Three rules carry most of the weight:
 
-- **One fresh-context auditor per batch.** The auditor gets the charter and that batch's text — not your writing history, not what you meant, not the other batches. Its entire value is that it does not know why you wrote the sentence.
+- **Text before code.** Record what the sentence claims *before* you open the implementation. `claims.json` is written before any `queue` output exists, so the order is auditable — start from the implementation and the claims you extract are already contaminated by what you know.
 - **Batches never overlap.** One file belongs to exactly one batch. Otherwise a sentence gets judged against two rubrics at once, and the seam between them is where the miss hides.
+- **One stranger, once, at the end.** Not one per batch. The reviewer gets the text and the charter — no verdict table, no source, no graph. It does not rule on violations; it reports its reaction as a first-time reader, and you decide what that reaction means.
 
-Each step's detail: [`references/procedure/00-scope.md`](references/procedure/00-scope.md) through [`references/procedure/04-route-close.md`](references/procedure/04-route-close.md).
+Each step's detail: [`references/procedure/00-scope.md`](references/procedure/00-scope.md) through [`references/procedure/03-close.md`](references/procedure/03-close.md).
 
 ## What it catches
 
@@ -117,7 +117,7 @@ Expect a per-channel batch map with a PASS/FAIL per batch. No "N issues overall,
 
 > Can this README ship?
 
-Expect one batch, a findings list with `file:line` for each item, a PASS/FAIL, and the exact lines to change.
+Expect one batch, a verdict table with `file:line` for each item, and the exact lines to change.
 
 ## What you get
 
@@ -127,13 +127,13 @@ One directory per run, safe to archive or delete:
 .audit/rounds/{date}-{slug}/
 ├── STATE.md            where the run stopped: finished steps, per-batch status
 ├── 00-scope.md         file set, batches, and each batch's nature gate
-├── 01-package-B1.md    self-contained evidence package for batch 1
-├── 02-findings-B1.md   the auditor's findings list for batch 1
-├── 03-adjudication.md  PASS/FAIL per finding, each with original file:line
-└── 04-close.md         where each finding went, plus the gate credential
+├── 01-evidence-B1.md   what the text claims, then how each claim measured up
+├── 02-verdict.md       PASS/FAIL per item, each with original file:line
+├── 03-review.md        what the cold reader reacted to, and what you made of it
+└── 03-close.md         where each finding went, plus the gate credential
 ```
 
-The gate credential is one sentence, written only after every batch is PASS, and it has to point back to the evidence in the adjudication table. No pointer, no credential.
+The gate credential is one sentence, written only after every batch is PASS, and it has to point back to the evidence in the verdict table. No pointer, no credential.
 
 ## Built on graphify (hard dependency)
 
@@ -165,25 +165,25 @@ This repository runs the program on itself:
 
 - [`self-check.yml`](.github/workflows/self-check.yml) runs `node scripts/redline-check.mjs --stat .` on every push and pull request.
 - [`examples/before-after/`](examples/before-after/) holds real rewrites, each labelled with the redline it broke.
-- [`examples/walkthrough/`](examples/walkthrough/) records one complete five-step run on a small file set, scoping through closing. In that run the recall script returned zero hits and the adjudication still upheld five violations — the worked argument for the gate being an audit rather than a script.
+- [`examples/walkthrough/`](examples/walkthrough/) records one complete run on a small file set, scoping through closing. In that run the recall script returned zero hits and the verdict still upheld five violations — the worked argument for the gate being an audit rather than a script.
 
 This program goes through its own gate before it asks you to pass yours.
 
 ## Repo map
 
 ```
-SKILL.md                          entry: when to use, two modes, five steps, six hard rules
+SKILL.md                          entry: when to use, two modes, four steps, six hard rules
 references/charter.md             judgement body: readers, five channels, 11 redlines, translation rules
-references/procedure/*.md          how to run each of the five steps
-references/brief-template.md      the auditor brief, pasted verbatim
-references/findings-format.md     the format a findings list must follow
-references/regression-exam.md     nine questions to score an auditor before a real run
+references/procedure/*.md          how to run each of the four steps
+references/review-brief.md         the cold-reader brief, pasted verbatim
+references/verdict-format.md      formats for the evidence sheet and the verdict table
+references/regression-exam.md     nine questions to calibrate the judge before a real run
 references/graphify-integration.md  the graph base: hard dependency, .audit workspace, three layers
 references/claim-extraction-spec.md extract "this tool will X" into verifiable claim nodes
 scripts/graph-audit.mjs           graph operations: init / ingest / queue / record / reconcile
-scripts/redline-check.mjs         wordlist recall — the auditor's aid, not the gate
+scripts/redline-check.mjs         wordlist recall — an aid, not the gate
 examples/before-after/            real rewrites, labelled by redline
-examples/walkthrough/             one full five-step run, recorded
+examples/walkthrough/             one full run, recorded
 .github/workflows/self-check.yml  dogfood: the recall script on this repository
 LICENSE                           MIT
 ```
